@@ -25,6 +25,9 @@ import json
 from flask import Flask, jsonify, request, abort
 from flask_sqlalchemy import SQLAlchemy
 from jsonschema import validate, ValidationError
+from sqlalchemy import String, Integer, ForeignKey, select
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from typing import List
 
 # Configura la base de datos
 db = SQLAlchemy()
@@ -39,25 +42,44 @@ class Author(db.Model):
     # - id: clave primaria autoincremental
     # - name: nombre del autor (obligatorio)
     # - Una relación con los libros usando db.relationship
-    pass
+    
+    # utilitzo els mateixos dels exercicis anteriors
+    __tablename__='authors'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable= False)
+
+    # relació entre Authors i Books
+    books: Mapped[List["Book"]] = relationship(back_populates='author')
+
+    # class variable
+    schema_validator = ""
 
     @classmethod
     def load_schema(cls):
         """Carga el esquema JSON para validar datos de autor"""
         # Implementa este método para cargar el esquema desde el archivo 'author_schema.json'.
-        pass
+        with open(os.path.dirname(__file__ )+ r'/author_schema.json') as file_handle:
+            cls.schema_validator = json.load(file_handle)
 
     @classmethod
     def check_schema(cls, data):
         """Valida los datos contra el esquema JSON de autor"""
         # Implementa este método para validar los datos usando jsonschema.validate()
-        pass
+        try:
+            validate(data,cls.schema_validator)
+        except:
+            return False
+        else:
+            return True
 
     def to_dict(self):
         """Convierte el autor a un diccionario para la respuesta JSON"""
         # Implementa este método para devolver id y name
         # No incluyas la lista de libros para evitar recursión infinita
-        pass
+        return { 
+                'id': self.id,
+                'name': self.name
+                }
 
 
 class Book(db.Model):
@@ -71,24 +93,50 @@ class Book(db.Model):
     # - title: título del libro (obligatorio)
     # - year: año de publicación (opcional)
     # - author_id: clave foránea que relaciona con la tabla 'authors'
-    pass
+    
+    # utilitzo el mateix que els dos exercicis anteriors
+    __tablename__ = 'books'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title:  Mapped[str] = mapped_column(String(200), nullable= False)
+    year: Mapped[int] = mapped_column(nullable=True)
+    author_id = mapped_column(ForeignKey('authors.id'), nullable=False)
+
+    # relació amb autors i books  many to many
+    author:Mapped[Author] = relationship(back_populates='books')
+
+
+    # class variable 
+    schema_validator = ""
 
     @classmethod
     def load_schema(cls):
         """ Carga el esquema JSON para validar datos de libro """
         # Implementa este método para cargar el esquema desde el archivo 'book_schema.json'
-        pass
+        with open(os.path.dirname(__file__)+r'/book_schema.json') as file_handler:
+            cls.schema_validator = json.load(file_handler)
+
 
     @classmethod
     def check_schema(cls, data):
         """Valida los datos contra el esquema JSON de libro"""
         # Implementa este método similar a Author.check_schema()
-        pass
+        try:
+            validate(data,cls.schema_validator)
+        except:
+            return False
+        else:
+            return True
+        
 
     def to_dict(self):
         """Convierte el libro a un diccionario para la respuesta JSON"""
         # Implementa este método para devolver id, title, year y author_id
-        pass
+        return {
+            'id': self.id,
+            'title': self.title,
+            'year': self.year,
+            'author_id': self.author_id
+            }
 
 
 def create_app():
@@ -103,6 +151,9 @@ def create_app():
     
     # Inicializa la base de datos con la aplicación
     db.init_app(app)
+
+    Author.load_schema()
+    Book.load_schema()
     
     # Crea todas las tablas en la base de datos
     with app.app_context():
@@ -143,7 +194,17 @@ def create_app():
             }
         """
         # TODO: Implementa este endpoint según las instrucciones
-        pass
+        data_json = request.get_json()
+        Author.load_schema()
+        if not Author.check_schema(data_json):
+            return jsonify({'error': 'Data Validation Error'}),400
+        
+        author_new = Author(name = data_json['name'])
+        db.session.add(author_new)
+        db.session.commit()
+
+        return author_new.to_dict(),201
+
 
     @app.route('/books', methods=['POST'])
     def add_book():
@@ -193,7 +254,32 @@ def create_app():
             }
         """
         # TODO: Implementa este endpoint según las instrucciones
-        pass
+        data_json = request.get_json()
+        Book.load_schema()
+        if not Book.check_schema(data_json):
+            return jsonify({'error': 'Data Validation Error'}),400
+        
+        # comprobo existencia autor
+        # ATENCIÓ: get_or_404 no es pot fer servir, per cause dels tests
+        autor_exists = db.session.get(Author,data_json['author_id'])
+        if autor_exists is None:
+            return jsonify({'error': 'Author does not exist'}),404
+
+        # Miro si hi ha any en json            
+        try:
+            year_new = data_json['year']
+        except:
+            year_new = None
+
+
+        book_new = Book(
+            title=data_json['title'],
+            year=year_new,
+            author_id =data_json['author_id'])
+        db.session.add(book_new)
+        db.session.commit()
+
+        return book_new.to_dict(),201
 
     return app
 
